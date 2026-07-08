@@ -166,12 +166,13 @@
     background:#fff;
   }
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 </head>
 <body>
 
 <header>
   <h1>Filigrane pour document d'identité</h1>
-  <p>Ajoutez un filigrane à l'image de votre visa ou pièce d'identité avant de la transmettre à un site d'annonces immobilières. Tout se passe dans votre navigateur : l'image n'est jamais envoyée sur un serveur.</p>
+  <p>Ajoutez un filigrane à l'image ou au PDF de votre visa ou pièce d'identité avant de le transmettre à un site d'annonces immobilières. Tout se passe dans votre navigateur : le fichier n'est jamais envoyé sur un serveur. Pour un PDF multi-pages, seule la première page est traitée.</p>
 </header>
 
 <main>
@@ -179,9 +180,10 @@
     <div class="field">
       <label>1. Votre document</label>
       <div class="dropzone" id="dropzone">
-        Cliquez ou glissez une image ici
+        Cliquez ou glissez une image ou un PDF ici
       </div>
-      <input type="file" id="fileInput" accept="image/*" style="display:none;">
+      <div id="loadingMsg" style="display:none; font-family:'Helvetica Neue',Arial,sans-serif; font-size:0.8rem; color:var(--accent); margin-top:6px;">Chargement du PDF…</div>
+      <input type="file" id="fileInput" accept="image/*,.pdf,application/pdf" style="display:none;">
     </div>
 
 ```
@@ -262,9 +264,24 @@ const rotVal = document.getElementById('rotVal');
 const spacingVal = document.getElementById('spacingVal');
 
 let img = null;
+const loadingMsg = document.getElementById('loadingMsg');
+
+if(window.pdfjsLib){
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+}
 
 function loadFile(file){
-  if(!file || !file.type.startsWith('image/')) return;
+  if(!file) return;
+  const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+
+  if(isPdf){
+    loadPdf(file);
+  } else if(file.type.startsWith('image/')){
+    loadImage(file);
+  }
+}
+
+function loadImage(file){
   const reader = new FileReader();
   reader.onload = (e) => {
     const image = new Image();
@@ -278,6 +295,45 @@ function loadFile(file){
     image.src = e.target.result;
   };
   reader.readAsDataURL(file);
+}
+
+function loadPdf(file){
+  if(!window.pdfjsLib){
+    alert("Le lecteur de PDF n'a pas pu se charger. Vérifiez votre connexion internet et réessayez.");
+    return;
+  }
+  loadingMsg.style.display = 'block';
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const typedArray = new Uint8Array(e.target.result);
+    pdfjsLib.getDocument({ data: typedArray }).promise.then((pdf) => {
+      return pdf.getPage(1);
+    }).then((page) => {
+      const scale = 2.5;
+      const viewport = page.getViewport({ scale });
+      const pdfCanvas = document.createElement('canvas');
+      pdfCanvas.width = viewport.width;
+      pdfCanvas.height = viewport.height;
+      const pdfCtx = pdfCanvas.getContext('2d');
+      return page.render({ canvasContext: pdfCtx, viewport }).promise.then(() => pdfCanvas);
+    }).then((pdfCanvas) => {
+      const image = new Image();
+      image.onload = () => {
+        img = image;
+        emptyState.style.display = 'none';
+        canvas.style.display = 'block';
+        downloadBtn.disabled = false;
+        loadingMsg.style.display = 'none';
+        render();
+      };
+      image.src = pdfCanvas.toDataURL('image/png');
+    }).catch((err) => {
+      loadingMsg.style.display = 'none';
+      alert("Impossible de lire ce PDF. Le fichier est peut-être protégé ou corrompu.");
+      console.error(err);
+    });
+  };
+  reader.readAsArrayBuffer(file);
 }
 
 dropzone.addEventListener('click', () => {
